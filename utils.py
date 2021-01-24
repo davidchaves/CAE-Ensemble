@@ -31,8 +31,8 @@ def ReadYahooDataset(_file_name, _normalize=True):
     return abnormal_data, abnormal_label
 
 def ReadSMDDataset(_file_name, _normalize=True):
-    abnormal_data = pd.read_csv(os.path.join("./SMDTesting/"+ _file_name), header=None, index_col=None)
-    abnormal_label = pd.read_csv(os.path.join("./SMDLabels/"+ _file_name), header=None, index_col=None)
+    abnormal_data = pd.read_csv(os.path.join("./SMD/SMDSeries/"+ _file_name), header=None, index_col=None)
+    abnormal_label = pd.read_csv(os.path.join("./SMD/SMDLabels/"+ _file_name), header=None, index_col=None)
     #abnormal_label = abnormal.iloc[:, 2].values
     # Normal = 0, Abnormal = 1 => # Normal = 1, Abnormal = -1
 
@@ -103,9 +103,9 @@ def ReadECGDataset(_file_name, _normalize=True):
 
 
 def CalculatePrecisionRecallF1Metrics(_abnormal_label, _y_pred):
-    precision = precision_score(_abnormal_label, _y_pred)
-    recall = recall_score(_abnormal_label, _y_pred)
-    f1 = f1_score(_abnormal_label, _y_pred)
+    precision = precision_score(y_true=_abnormal_label, y_pred=_y_pred, pos_label=-1)
+    recall = recall_score(y_true=_abnormal_label, y_pred=_y_pred, pos_label=-1)
+    f1 = f1_score(y_true=_abnormal_label, y_pred=_y_pred, pos_label=-1)
     return precision, recall, f1
 
 
@@ -133,10 +133,8 @@ def CalculatePrecisionAtK(_abnormal_label, _score, _k, _type):
 
 
 def CalculateROCAUCMetrics(_abnormal_label, _score):
-    fpr, tpr, _ = roc_curve(_abnormal_label, _score)
+    fpr, tpr, _ = roc_curve(y_true=_abnormal_label, y_score=_score, pos_label=-1) # we should score is reconstruction error?
     roc_auc = auc(np.nan_to_num(fpr), np.nan_to_num(tpr))
-    if roc_auc < 0.5:
-        roc_auc = 1 - roc_auc
     return fpr, tpr, roc_auc
 
 
@@ -148,11 +146,9 @@ def CalculateCohenKappaMetrics(_abnormal_label, _y_pred):
 
 
 def CalculatePrecisionRecallCurve(_abnormal_label, _score):
-    precision_curve, recall_curve, _ = precision_recall_curve(_abnormal_label, _score)
-    average_precision = average_precision_score(_abnormal_label, _score)
-    if average_precision < 0.5:
-        average_precision = 1 - average_precision
-    return precision_curve, recall_curve, average_precision
+    precision_curve, recall_curve, _ = precision_recall_curve(y_true=_abnormal_label, probas_pred=_score, pos_label=-1)
+    pr_auc = auc(recall_curve, precision_curve)
+    return precision_curve, recall_curve, pr_auc
 
 
 def CalculateFinalAnomalyScore(_ensemble_score):
