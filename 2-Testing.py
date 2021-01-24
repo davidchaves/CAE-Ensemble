@@ -8,36 +8,36 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-import torch.utils.data as data_utils
 from torch import autograd
-from torch.utils.data import DataLoader
-from sklearn import preprocessing
-
+from datetime import datetime
+from statistics import mean, stdev
 import os
 from os import listdir
 from os.path import isfile, join
 import logging
-import csv
-import pandas as pd
+from sklearn import preprocessing
+
+
+from torch.utils.data import DataLoader
+import torch.utils.data as data_utils
 
 import numpy as np
+
 import random
 from random import randint
-
 import math
 import time
-from datetime import datetime
 
-
-# In[2]:
-
+import pandas as pd
+from scipy.stats import zscore
+import csv
 
 seed = int(time.time())
+
 np.random.seed(seed)
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)
 torch.backends.cudnn.deterministic = True
-
 if torch.cuda.is_available():
     device = torch.device("cuda")
     torch.cuda.set_device(randint(0, torch.cuda.device_count()-1))
@@ -45,7 +45,7 @@ else:
     device = torch.device("cpu")
 
 
-# In[3]:
+# In[2]:
 
 
 class encoder(nn.Module):
@@ -63,7 +63,6 @@ class encoder(nn.Module):
         
     def forward(self, seriesInput, batch):
         linearOutput = torch.unsqueeze(self.linear(torch.unsqueeze(seriesInput,1).to(device)), 2)
-        #linearOutput = torch.unsqueeze(self.linear(seriesInput.to(device)), 2)
         positionSeries = torch.arange((batch-1) * linearOutput.size()[0], 
                                       batch * linearOutput.size()[0]).unsqueeze(1).float().to(device)
         positionEmbedded = self.position(positionSeries/len(normalizedDataset)).unsqueeze(1).permute(0, 2, 1)
@@ -80,7 +79,7 @@ class encoder(nn.Module):
         return convolutionHidden, residualConnection
 
 
-# In[4]:
+# In[3]:
 
 
 class decoder(nn.Module):
@@ -133,17 +132,13 @@ class decoder(nn.Module):
         return normalizedDecoder
 
 
-# In[5]:
+# In[4]:
 
 
 lossFunction1 = nn.BCEWithLogitsLoss(reduction='mean')
 lossFunction = nn.L1Loss()
 lossFunction3 = nn.PoissonNLLLoss()
 lossFunction4 = nn.MSELoss()
-
-
-# In[6]:
-
 
 def diversityLoss(input, target, iteration):
     sizeInput = input.size()[0]
@@ -156,169 +151,100 @@ def diversityLoss(input, target, iteration):
     return lossDiversity
 
 
-# In[7]:
+# In[5]:
 
 
 def VariableLR(initialLR, currentEpoch, epochPerCycle):
     return initialLR * (np.cos(np.pi * currentEpoch / epochPerCycle) + 1) / 2
 
 
-# In[8]:
+# In[6]:
+
+
+def loading(encoderName,decoderName):
+
+    encoder_eval = encoder()
+    decoder_eval = decoder()
+
+    encoder_eval.load_state_dict(torch.load(os.path.join("./Yahoo/Special/Models", encoderName)))
+    decoder_eval.load_state_dict(torch.load(os.path.join("./Yahoo/Special/Models", decoderName)))
+
+    data = autograd.Variable(torchDataset)
+
+    encoder_eval.eval()
+    decoder_eval.eval()
+
+    a, b = encoder_eval(data,1)
+    reconstruction = decoder_eval(a, b)
+
+    normDifferences = torch.norm(reconstruction - torchDataset, dim=1)
+
+    score = zscore(normDifferences.tolist())
+    outlierPred_Normal = []
+    outlierPred_Automatic = []
+
+    thresholdNormal = 2.5 
+    for i in range (len(score)):
+        if score[i] < thresholdNormal:
+            outlierPred_Normal.append(1)
+        else:
+            outlierPred_Normal.append(-1)
+
+    with open("./Yahoo/Special/CAE/"+encoderName[8:-4]+".csv", 'w') as f:
+        writer = csv.writer(f)
+        writer.writerows(zip(score, outlierPred_Normal))
+        #writer.writerows(zip(normDifferences.tolist(), outlierPred_Normal))
+
+
+# In[7]:
 
 
 numberEpochs = 10
-cycles = 7
+cycles = 10
 beta = 0.9
-diversityFactor = 0.7
+diversityFactor = 0.8
 learningRate = 0.001
 linearChannels = 64
 convolutionalChannels = 128
 attentionChannels = int(convolutionalChannels/2)
 kernelSize = 3
 
-filesPath = "./Yahoo/Special/"
-onlyFiles = [f for f in listdir(filesPath) if isfile(join(filesPath, f))]
+filesPath = "./Yahoo/Test/"
+onlyfiles = [f for f in listdir(filesPath) if isfile(join(filesPath, f))]
 
-for nameFile in onlyFiles:
-    #Yahoo
-    importedData = pd.read_csv(filesPath + nameFile)
+for nameFile in onlyfiles:
+    importedData = pd.read_csv(filesPath + nameFile) #Yahoo
+    attributes = ['value']
+    importedData = importedData[attributes]
+
+    #importedData = pd.read_csv(filesPath + nameFile, header=None) #ECG
+    #importedData = importedData.iloc[:, 1:-1] #ECG
+    
+    #importedData = pd.read_csv(filesPath + nameFile) #Donut
+    #attributes = ['value']
+    #importedData = importedData[attributes]
+    
+    #importedData = pd.read_csv(filesPath + nameFile,header=None) #SMD
+    
+    #importedData = pd.read_csv(filesPath + nameFile)
     numberColumns = 1
+    
     data = importedData['value']
     x = data.values.reshape(-1, 1)
-    
-    #Donut
-    #importedData = pd.read_csv(filesPath + nameFile)
-    #numberColumns = 1
-    #data = importedData['value']
-    #x = data.values.reshape(-1, 1)
-    
-    #ECG
-    #importedData = pd.read_csv(filesPath + nameFile, header=None)
-    #data = importedData.iloc[:, 1:-1]
-    #numberColumns = len(data.columns)
-    #x = data.values
-    
-    #SMD
-    #data = pd.read_csv(filesPath + nameFile, header=None)
-    #numberColumns = len(data.columns)
-    #x = data.values
-    
     min_max_scaler = preprocessing.MinMaxScaler()
     x_scaled = min_max_scaler.fit_transform(x)
     normalizedDataset = pd.DataFrame(x_scaled).squeeze()      
     
     torchDataset = torch.from_numpy(normalizedDataset.values).float().to(device)
-    
-    #batchSize = len(normalizedDataset)
-    #nGrams = 10
-    #steps = 1
-    #dataloader = [torchDataset[steps*(i+1)-1:steps*(i+1)+nGrams] for i in range(batchSize - nGrams)]
-    
-    dataloader = DataLoader(torchDataset, batch_size=len(normalizedDataset), shuffle=True) #len(normalizedDataset)
+    dataloader = DataLoader(torchDataset, batch_size=len(normalizedDataset), shuffle=True)
 
-    now = datetime.utcnow().strftime("%Y%m%d-%H:%M:%S")
-    logging.basicConfig(level=logging.DEBUG, filename="./Yahoo/Special/Log_"+ now +".txt", 
-                        filemode="a+",format="%(message)s")
+    for file in sorted(os.listdir("./Yahoo/Special/Models/")):
+        if file.startswith("Encoder_"+nameFile):
+            loading(file,"De"+file[2:])
 
-    encoderTrain = encoder()
-    decoderTrain = decoder()
-    encoderOptimizer = torch.optim.Adam(encoderTrain.parameters(), lr=learningRate)
-    decoderOptimizer = torch.optim.Adam(decoderTrain.parameters(), lr=learningRate)
-    
-    dataComplete = autograd.Variable(torchDataset).to(device)
-    
-    #outputCycle = torch.empty(cycles,torchDataset.size()[0],torchDataset.size()[1],requires_grad=False).to(device)
-    outputCycle = torch.empty(cycles,torchDataset.size()[0],numberColumns,requires_grad=False).to(device)
-    
-    for cycle in range(cycles):
-        logging.info("Cycle # " + str(cycle + 1) + " " + nameFile)
 
-        parametersEncoder = len(list(encoderTrain.parameters()))
-        parametersDecoder = len(list(decoderTrain.parameters()))
-        genericFeaturesEncoder = random.sample(range(1, parametersEncoder), math.floor(parametersEncoder*beta))
-        genericFeaturesDecoder = random.sample(range(1, parametersDecoder), math.floor(parametersDecoder*beta))
-        lossesCycle = []
-        
-        for epoch in range(numberEpochs):
-            lr = VariableLR(learningRate, epoch, numberEpochs)
-            encoderOptimizer.param_groups[0]['lr'] = lr
-            decoderOptimizer.param_groups[0]['lr'] = lr
+# In[ ]:
 
-            index = 0
 
-            for parameterEncoder in encoderTrain.parameters():
-                index += 1
-                if index in genericFeaturesEncoder:
-                    parameterEncoder.requires_grad = True
-                else:
-                    parameterEncoder.requires_grad = False
 
-            index = 0
-            
-            for parameterDecoder in decoderTrain.parameters():
-                index += 1
-                if index in genericFeaturesDecoder:
-                    parameterDecoder.requires_grad = True
-                else:
-                    parameterDecoder.requires_grad = False
-                    
-            batchCounter = 0
-
-            if(torch.backends.cudnn.version() != None) and (device == 'cuda'):
-                encoderTrain.cuda()
-                decoderTrain.cuda()
-
-            encoderTrain.train()
-            decoderTrain.train()
-
-            for dataBatch in dataloader:
-
-                batchCounter += 1
-                dataBatchTorch = autograd.Variable(dataBatch)
-                convolutionHiddenBatch, residualConnectionBatch = encoderTrain(dataBatchTorch,batchCounter) 
-                batchReconstruction = decoderTrain(convolutionHiddenBatch, residualConnectionBatch)
-
-                if cycle == 0:
-                    reconstruction_loss = lossFunction(torch.squeeze(batchReconstruction), 
-                                                        torch.squeeze(dataBatchTorch))
-                else:
-                    reconstruction_loss = diversityLoss(torch.squeeze(batchReconstruction), 
-                                                         torch.squeeze(dataBatchTorch),batchCounter)
-
-                decoderOptimizer.zero_grad()
-                encoderOptimizer.zero_grad()
-                reconstruction_loss.backward()
-                decoderOptimizer.step()
-                encoderOptimizer.step()
-
-            encoderTrain.to(device).eval()
-            decoderTrain.to(device).eval()
-
-            convolutionHiddenComplete, residualConnectionComplete = encoderTrain(dataComplete.to(device),1)
-            reconstructionComplete = decoderTrain(convolutionHiddenComplete, residualConnectionComplete)
-
-            if cycle == 0:
-                lossComplete = lossFunction(torch.squeeze(reconstructionComplete), 
-                                                        torch.squeeze(dataComplete))
-            else:
-                lossComplete = diversityLoss(torch.squeeze(reconstructionComplete), 
-                                                        torch.squeeze(dataComplete),1)
-
-            logging.info('Epoch {} | Learning Rate {:.6f} | Loss {:.6f}'.format(epoch + 1, lr, 
-                                                                                lossComplete.item()))
-
-            lossesCycle.extend([lossComplete.item()])
-
-            if ((epoch + 1) == numberEpochs):
-                now = datetime.utcnow().strftime("%Y%m%d-%H:%M:%S")
-                cycleFormat = '{:03}'.format(cycle + 1)
-                epochFormat = '{:03}'.format(epoch + 1)
-                modelName = "{}_cycle_{}_epoch_{}_{}".format(nameFile,cycleFormat,epochFormat,now)
-                encoderName = "Encoder_"+ modelName + ".pth"
-                decoderName = "Decoder_"+ modelName + ".pth"
-                torch.save(encoderTrain.state_dict(), os.path.join("./Yahoo/Special", encoderName))
-                torch.save(decoderTrain.state_dict(), os.path.join("./Yahoo/Special", decoderName))
-
-        with torch.no_grad():
-            outputCycle[cycle] = reconstructionComplete #.squeeze()
 
